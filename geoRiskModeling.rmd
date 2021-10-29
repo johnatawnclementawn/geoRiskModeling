@@ -47,7 +47,7 @@ DCBoundary <-
 ## Used in LOOCV 
 neighborhoods <- 
   st_read("https://raw.githubusercontent.com/blackmad/neighborhoods/master/washington.geojson") %>%
-  st_transform(st_crs(fishnet)) 
+  st_transform(crs) 
 
 # Police Districts (7 districts) (larger spatial unit)
 policeDistricts <- 
@@ -162,66 +162,46 @@ ggplot() +
 >
 > hint: for all the reasons we learned in class
 
-```{r pullMetro, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
-# Code originally from TOD Assignment
-# Although the Metro extends into multiple counties and cities in Virginia and Maryland, we will only examine stations in DC
-metroStops <- st_read("https://opendata.arcgis.com/datasets/54018b7f06b943f2af278bbe415df1de_52.geojson") %>%
-	st_transform('ESRI:102746')
-
-# We need to clean up the stops data a bit
-# There are some stops in which multiple lines visit the stop. For our case, we will take the first stop listed
-metroStops <- 
-	metroStops %>%
-	mutate(LINE = 
-				 	plyr::revalue(LINE, 
-						replace = c(
-			 				"green, yellow" = "green", 
-			 				"grn, yllw, orange, blue, slvr" = "green", 
-				 			"red, green, yellow" = "red", 
-			 				"red, blue, orange, silver" = "red",
-				 			"blue, orange, silver" = "blue",
-				 			"orange, blue, silver" = "orange"
-					 	)
-				 	)
-				) 
-```
-
 
 ```{r pullGraffitiPredictors, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 
 # Abandoned cars (includes both public & private land)
 abandonedCars <- DC311 %>%
   filter(grepl("Abandoned Vehicle", SERVICECODEDESCRIPTION)) %>%
-  mutate(Legend = "AbandonedCar", Count = 1) %>%
+  mutate(Legend = "Abandoned_Car", Count = 1) %>%
   dplyr::select(Legend, Count)
 
 # Pull Illegal Dumping from overall 311 data
-dumping <- DC311 %>%
+Illegal_Dumping <- DC311 %>%
   filter(grepl("Illegal Dumping", SERVICECODEDESCRIPTION)) %>%
-  mutate(Legend = "Dumping", Count = 1) %>%
+  mutate(Legend = "Illegal_Dumping", Count = 1) %>%
   dplyr::select(Legend, Count)
 
 # Maybe drunk people are more likely to tag?
 liquourLicenses <- st_read("https://opendata.arcgis.com/datasets/cabe9dcef0b344518c7fae1a3def7de1_5.geojson") %>%
   st_transform(crs) %>%
-  mutate(Legend = "Liquour", Count = 1) %>%
+  mutate(Legend = "liquourLicenses", Count = 1) %>%
+  dplyr::select(Legend, Count)
+
+# Metro stations 
+metroStops <- st_read("https://opendata.arcgis.com/datasets/54018b7f06b943f2af278bbe415df1de_52.geojson") %>%
+	st_transform(crs) %>%
+  mutate(Legend = "metroStops", Count = 1) %>%
   dplyr::select(Legend, Count)
 
 # 311 complaints regarding streetlight outages
-streetlights <- DC311%>%
+streetlightsOut <- DC311%>%
   filter(grepl("Streetlight", SERVICECODEDESCRIPTION)) %>%
-  mutate(Legend = "StreetlightOut", Count = 1) %>%
+  mutate(Legend = "streetlightsOut", Count = 1) %>%
   dplyr::select(Legend, Count)
 
 # Major crimes 
 thefts <- st_read("https://opendata.arcgis.com/datasets/6af5cb8dc38e4bcbac8168b27ee104aa_38.geojson") %>%
   st_transform(crs) %>%
 	filter(grepl('THEFT',OFFENSE)) %>%
-	mutate(Legend = "Theft", Count = 1) %>%
+	mutate(Legend = "thefts", Count = 1) %>%
 	dplyr::select(Legend, Count) 
 
-
-allPredictors <- rbind(abandonedCars, dumping, liquourLicenses, streetlights, thefts)
 ```
 
 #### How we aggregate a feature to our fishnet
@@ -230,7 +210,7 @@ This is an important chunk of code with some unfamiliar lines. We'll step throug
 
 ```{r echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 
-vars_net <- allPredictors %>%
+vars_net <- rbind(abandonedCars, Illegal_Dumping, liquourLicenses, metroStops, streetlightsOut, thefts) %>%
   st_join(., fishnet, join=st_within) %>%
   st_drop_geometry() %>%
   group_by(uniqueID, Legend) %>%
@@ -268,19 +248,22 @@ st_coid <- st_centroid
 vars_net <- vars_net %>%
     mutate(Abandoned_Cars.nn = nn_function(st_c(st_coid(vars_net)), 
                                            st_c(abandonedCars),
-                                           k = 5)) %>%
-    mutate(Dumping.nn = nn_function(st_c(st_coid(vars_net)), 
-                                           st_c(dumping),
-                                           k = 5)) %>%
+                                           k = 3)) %>%
+    mutate(Illegal_Dumping.nn = nn_function(st_c(st_coid(vars_net)), 
+                                           st_c(Illegal_Dumping),
+                                           k = 3)) %>%
     mutate(liquourLicenses.nn = nn_function(st_c(st_coid(vars_net)), 
                                            st_c(liquourLicenses),
-                                           k = 5)) %>%
-    mutate(streetlights.nn = nn_function(st_c(st_coid(vars_net)), 
-                                           st_c(streetlights),
-                                           k = 5)) %>%
+                                           k = 3)) %>%
+    mutate(metroStops.nn = nn_function(st_c(st_coid(vars_net)), 
+                                           st_c(metroStops),
+                                           k = 3)) %>%
+    mutate(streetlightsOut.nn = nn_function(st_c(st_coid(vars_net)), 
+                                           st_c(streetlightsOut),
+                                           k = 3)) %>%
     mutate(thefts.nn = nn_function(st_c(st_coid(vars_net)), 
                                            st_c(thefts),
-                                           k = 5))
+                                           k = 3))
   
   
 ```
@@ -292,11 +275,18 @@ vars_net.long.nn <-
   dplyr::select(vars_net, ends_with(".nn")) %>%
     gather(Variable, value, -geometry)
 
-ggplot() +
-      geom_sf(data = vars_net.long.nn, aes(fill=value), colour=NA) +
-      scale_fill_viridis(name="NN Distance") +
-      labs(title="Nearest Neighbor Risk Factors") +
-      mapTheme()
+vars <- unique(vars_net.long.nn$Variable)
+mapList <- list()
+
+for(i in vars){
+  mapList[[i]] <- 
+    ggplot() +
+      geom_sf(data = filter(vars_net.long.nn, Variable == i), aes(fill=value), colour=NA) +
+      scale_fill_viridis(name="") +
+      labs(title=i) +
+      mapTheme()}
+
+do.call(grid.arrange,c(mapList, ncol = 3, top = "Average Distance to nearest neighbor(s) risk factors by fishnet"))
 ```
 
 ## Join NN feature to our fishnet
@@ -314,7 +304,7 @@ final_net <-
 
 Using spatial joins to join *centroids* of fishnets to polygon for neighborhoods and districts.
 
-> What issues arise when we try to join polygons to polygons in space?
+> What issues arise when we try to join polygons to polygons in space? End up with weird slices of polygons
 
 ```{r}
 
@@ -327,9 +317,9 @@ final_net <-
       st_sf() %>%
   na.omit()
 
-# for live demo
-# mapview::mapview(final_net, zcol = "District")
 ```
+
+
 
 ## Local Moran's I for fishnet grid cells
 
@@ -355,14 +345,14 @@ final_net.weights <- nb2listw(final_net.nb, style="W", zero.policy=TRUE)
 
 ```{r}
 ## see ?localmoran
-local_morans <- localmoran(final_net$Abandoned_Cars, final_net.weights, zero.policy=TRUE) %>% 
+local_morans <- localmoran(final_net$countGraffiti, final_net.weights, zero.policy=TRUE) %>% 
   as.data.frame()
 
 # join local Moran's I results to fishnet
 final_net.localMorans <- 
   cbind(local_morans, as.data.frame(final_net)) %>% 
   st_sf() %>%
-  dplyr::select(Abandoned_Cars_Count = Abandoned_Cars, 
+  dplyr::select(Graffiti_Count = countGraffiti, 
                 Local_Morans_I = Ii, 
                 P_Value = `Pr(z != E(Ii))`) %>%
   mutate(Significant_Hotspots = ifelse(P_Value <= 0.001, 1, 0)) %>%
@@ -390,38 +380,53 @@ for(i in vars){
       labs(title=i) +
       mapTheme(title_size = 14) + theme(legend.position="bottom")}
 
-do.call(grid.arrange,c(varList, ncol = length(vars), top = "Local Morans I statistics, Burglary"))
+do.call(grid.arrange,c(varList, ncol = length(vars), top = "Local Morans I statistics, Graffiti"))
 ```
 
-## Distance to Hot spot
+## Distance to graffiti hot spots
 
 Using NN distance to a hot spot location
 
 ```{r}
 # generates warning from NN
 final_net <- final_net %>% 
-  mutate(abandoned.isSig = 
+  mutate(graffiti.isSig = 
            ifelse(local_morans[,5] <= 0.001, 1, 0)) %>%
-  mutate(abandoned.isSig.dist = 
+  mutate(graffiti.isSig.dist = 
            nn_function(st_c(st_coid(final_net)),
                        st_c(st_coid(filter(final_net, 
-                                           abandoned.isSig == 1))), 
+                                           graffiti.isSig == 1))), 
                        k = 1))
 
-## What does k = 1 represent?
-```
-
-> What does `k = 1` above mean in terms of measuring nearest neighbors?
-
-### Plot NN distance to hot spot
-
-```{r}
 ggplot() +
-      geom_sf(data = final_net, aes(fill=abandoned.isSig.dist), colour=NA) +
+      geom_sf(data = final_net, aes(fill=graffiti.isSig.dist), colour=NA) +
       scale_fill_viridis(name="NN Distance") +
-      labs(title="Abandoned Car NN Distance") +
+      labs(title="Distance to Graffiti Hotspots") +
       mapTheme()
 ```
+
+## Correlation Small Multiples
+```{r correlationSM, fig.height=10, fig.width= 6}
+correlation.long <-
+  st_drop_geometry(final_net) %>%
+    dplyr::select(-uniqueID, -cvID, -name, -District) %>%
+    gather(Variable, Value, -countGraffiti)
+
+correlation.cor <-
+  correlation.long %>%
+    group_by(Variable) %>%
+    summarize(correlation = cor(Value, countGraffiti, use = "complete.obs"))
+    
+ggplot(correlation.long, aes(Value, countGraffiti)) +
+  geom_point(size = 0.1) +
+  geom_text(data = correlation.cor, aes(label = paste("r =", round(correlation, 2))),
+            x=-Inf, y=Inf, vjust = 1.5, hjust = -.1) +
+  geom_smooth(method = "lm", se = FALSE, colour = "black") +
+  facet_wrap(~Variable, ncol = 2, scales = "free") +
+  labs(title = "Graffiti count as a function of risk factors") +
+  plotTheme()
+```
+
 
 ## Modeling and CV
 
@@ -429,18 +434,21 @@ Leave One Group Out CV on spatial features
 
 ```{r sults='hide'}
 
-# View(crossValidate)
-
 ## define the variables we want
-reg.ss.vars <- c("Abandoned_Cars.nn", "abandoned.isSig.dist")
+reg.vars <- c("Abandoned_Cars.nn", "Illegal_Dumping.nn", 
+              "liquourLicenses.nn", "MetroStops", "streetlightsOut.nn", "thefts.nn")
+
+reg.ss.vars <- c("Abandoned_Cars.nn", "Illegal_Dumping.nn", 
+                "liquourLicenses.nn", "MetroStops", "streetlightsOut.nn", "thefts.nn",
+                "graffiti.isSig", "graffiti.isSig.dist")
 
 ## RUN REGRESSIONS
 reg.ss.spatialCV <- crossValidate(
   dataset = final_net,
   id = "name",                           
-  dependentVariable = "countBurglaries",
+  dependentVariable = "countGraffiti",
   indVariables = reg.ss.vars) %>%
-    dplyr::select(cvID = name, countBurglaries, Prediction, geometry)
+    dplyr::select(cvID = name, countGraffiti, Prediction, geometry)
 ```
 
 ```{r}
@@ -448,7 +456,7 @@ reg.ss.spatialCV <- crossValidate(
 error_by_reg_and_fold <- 
   reg.ss.spatialCV %>%
     group_by(cvID) %>% 
-    summarize(Mean_Error = mean(Prediction - countBurglaries, na.rm = T),
+    summarize(Mean_Error = mean(Prediction - countGraffiti, na.rm = T),
               MAE = mean(abs(Mean_Error), na.rm = T),
               SD_MAE = mean(abs(Mean_Error), na.rm = T)) %>%
   ungroup()
@@ -591,10 +599,10 @@ rbind(burg_KDE_sf, burg_risk_sf) %>%
   st_set_geometry(NULL) %>% na.omit() %>%
   gather(Variable, Value, -label, -Risk_Category) %>%
   group_by(label, Risk_Category) %>%
-  summarize(countBurglaries = sum(Value)) %>%
+  summarize(countGraffiti = sum(Value)) %>%
   ungroup() %>%
   group_by(label) %>%
-  mutate(Rate_of_test_set_crimes = countBurglaries / sum(countBurglaries)) %>%
+  mutate(Rate_of_test_set_crimes = countGraffiti / sum(countGraffiti)) %>%
     ggplot(aes(Risk_Category,Rate_of_test_set_crimes)) +
       geom_bar(aes(fill=label), position="dodge", stat="identity") +
       scale_fill_viridis(discrete = TRUE) +
