@@ -35,16 +35,28 @@ source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-L
 
 ## Read in Data from Washington DC
 
-```{r}
+```{r DCBoundaries, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 crs <- 'ESRI:102285' #StatePlane Maryland
 
+# Overall DC Boundary
+DCBoundary <- 
+  st_read("https://opendata.arcgis.com/datasets/7241f6d500b44288ad983f0942b39663_10.geojson") %>%
+  st_transform(crs) 
+
+# DC Neighborhoods from github open data 
+## Used in LOOCV 
+neighborhoods <- 
+  st_read("https://raw.githubusercontent.com/blackmad/neighborhoods/master/washington.geojson") %>%
+  st_transform(st_crs(fishnet)) 
+
+# Police Districts (7 districts) (larger spatial unit)
 policeDistricts <- 
   st_read("https://opendata.arcgis.com/datasets/d2a63e5246ff41bdaca8ea9be95c8a4b_9.geojson") %>%
   st_transform(crs) %>%
   dplyr::select(District = DISTRICT) %>%
   mutate(District = as.character(District))
   
-  
+# Each police district has about 3 Sectors (smaller spatial unit) 
 policeSectors <- 
   st_read("https://opendata.arcgis.com/datasets/6ac17c2ff8cc4e20b3768dd1b98adf7a_23.geojson") %>%
   st_transform(crs) %>%
@@ -53,26 +65,27 @@ policeSectors <-
 # Format police sectors in usable way
 policeSectors$District <- paste0("0", str_replace(policeSectors$District, "D", "0"))
 
+
 bothPoliceUnits <- rbind(mutate(policeDistricts, Legend = "Police Districts"), 
                          mutate(policeSectors, Legend = "Police Sectors"))
 
+```
+
+```{r graffiti, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 # DC 311 Complaints
 DC311 <- 
   st_read("https://opendata.arcgis.com/datasets/19905e2b0e1140ec9ce8437776feb595_8.geojson") %>%
-  st_transform(crs)
+  st_transform(crs)  %>%
+  dplyr::select(-c("INSPECTIONFLAG", "INSPECTIONDATE", "INSPECTORNAME")) 
+
+DC311Vars <- data.frame(table(DC311$SERVICECODEDESCRIPTION))
 
 # Pull graffiti from overall 311 data
 graffiti <- DC311 %>%
-  filter(grepl("Graffiti", SERVICECODEDESCRIPTION))
+  filter(grepl("Graffiti", SERVICECODEDESCRIPTION)) %>%
+  dplyr::select(Description = SERVICECODEDESCRIPTION,
+                Count = SERVICECALLCOUNT)
 
-# Pull Illegal Dumping from overall 311 data
-dumping <- DC311 %>%
-  filter(grepl("Illegal Dumping", SERVICECODEDESCRIPTION))
-
-
-DCBoundary <- 
-  st_read("https://opendata.arcgis.com/datasets/7241f6d500b44288ad983f0942b39663_10.geojson") %>%
-  st_transform(crs) 
 ```
 
 ## visualizing point data
@@ -84,10 +97,8 @@ Plotting point data and density
 > Are there other geometries useful to represent point locations?
   - aggregate by 
 
-```{r fig.width=7, fig.height=6}
+```{r pointDens, echo=TRUE, fig.height=6, fig.width=7, message=FALSE, warning=FALSE}
 
-###### Graffiti #######
-# uses grid.arrange to organize indpendent plots
 grid.arrange(ncol=2,
 ggplot() + 
   geom_sf(data = DCBoundary) +
@@ -105,37 +116,11 @@ ggplot() +
   labs(title = "Density of Graffiti Complaints\nWashington DC - 2017") +
   mapTheme(title_size = 14) + theme(legend.position = "none"))
 
-###### Illegal dumping #######
-# uses grid.arrange to organize indpendent plots
-grid.arrange(ncol=2,
-ggplot() + 
-  geom_sf(data = DCBoundary) +
-  geom_sf(data = dumping, colour="red", size=0.1, show.legend = "point") +
-  labs(title= "Illegal Dumping,\nWashington DC - 2017") +
-  mapTheme(title_size = 14),
-
-ggplot() + 
-  geom_sf(data = DCBoundary, fill = "grey40") +
-  stat_density2d(data = data.frame(st_coordinates(dumping)), 
-                 aes(X, Y, fill = ..level.., alpha = ..level..),
-                 size = 0.01, bins = 40, geom = 'polygon') +
-  scale_fill_viridis() +
-  scale_alpha(range = c(0.00, 0.35), guide = FALSE) +
-  labs(title = "Density of Illegal Dumping\nWashington DC - 2017") +
-  mapTheme(title_size = 14) + theme(legend.position = "none"))
-
-
 ```
 
 ## Creating a fishnet grid
 
-> What is a fishnet grid?
-
-The `{sf}` package offers really easy way to create fishnet grids.
-
-Examine the fishnet - the unique ID is crucial to building a data set!
-
-```{r}
+```{r fishnet echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 ## using {sf} to create the grid
 ## Note the `.[DCBoundary] %>% ` line. This is needed to clip the grid to our data
 fishnet <- 
@@ -149,12 +134,9 @@ fishnet <-
 
 ### Aggregate points to the fishnet
 
-> How can we aggregate points into a fishnet grid?
-
-```{r}
+```{r graffitiAggregate, echo=TRUE echo=TRUE, message=FALSE, warning=FALSE}
 ## add a value of 1 to each crime, sum them with aggregate
 
-###### Graffiti #######
 crime_net <- 
   dplyr::select(graffiti) %>% 
   mutate(countGraffiti = 1) %>% 
@@ -170,22 +152,6 @@ ggplot() +
   labs(title = "Count of Graffiti complaints for the fishnet") +
   mapTheme()
 
-###### Illegal dumping #######
-crime_net <- 
-  dplyr::select(dumping) %>% 
-  mutate(countDumping = 1) %>% 
-  aggregate(., fishnet, sum) %>%
-  mutate(countDumping = replace_na(countDumping, 0),
-         uniqueID = rownames(.),
-         cvID = sample(round(nrow(fishnet) / 24), 
-                       size=nrow(fishnet), replace = TRUE))
-
-ggplot() +
-  geom_sf(data = crime_net, aes(fill = countDumping), color = NA) +
-  scale_fill_viridis() +
-  labs(title = "Count of Illegal Dumping for the fishnet") +
-  mapTheme()
-
 ```
 
 ## Modeling Spatial Features
@@ -196,32 +162,75 @@ ggplot() +
 >
 > hint: for all the reasons we learned in class
 
-```{r}
-## only pulling a single variable for our model to keep it simple
-## using Socrata again
-abandonCars <- 
-  read.socrata("https://data.cityofchicago.org/Service-Requests/311-Service-Requests-Abandoned-Vehicles/3c9v-pnva") %>%
-    mutate(year = substr(creation_date,1,4)) %>% filter(year == "2017") %>%
-    dplyr::select(Y = latitude, X = longitude) %>%
-    na.omit() %>%
-    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
-    st_transform(st_crs(fishnet)) %>%
-    mutate(Legend = "Abandoned_Cars")
+```{r pullMetro, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+# Code originally from TOD Assignment
+# Although the Metro extends into multiple counties and cities in Virginia and Maryland, we will only examine stations in DC
+metroStops <- st_read("https://opendata.arcgis.com/datasets/54018b7f06b943f2af278bbe415df1de_52.geojson") %>%
+	st_transform('ESRI:102746')
 
-## Neighborhoods to use in LOOCV in a bit
-neighborhoods <- 
-  st_read("https://raw.githubusercontent.com/blackmad/neighborhoods/master/washington.geojson") %>%
-  st_transform(st_crs(fishnet)) 
+# We need to clean up the stops data a bit
+# There are some stops in which multiple lines visit the stop. For our case, we will take the first stop listed
+metroStops <- 
+	metroStops %>%
+	mutate(LINE = 
+				 	plyr::revalue(LINE, 
+						replace = c(
+			 				"green, yellow" = "green", 
+			 				"grn, yllw, orange, blue, slvr" = "green", 
+				 			"red, green, yellow" = "red", 
+			 				"red, blue, orange, silver" = "red",
+				 			"blue, orange, silver" = "blue",
+				 			"orange, blue, silver" = "orange"
+					 	)
+				 	)
+				) 
+```
 
+
+```{r pullGraffitiPredictors, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+
+# Abandoned cars (includes both public & private land)
+abandonedCars <- DC311 %>%
+  filter(grepl("Abandoned Vehicle", SERVICECODEDESCRIPTION)) %>%
+  mutate(Legend = "AbandonedCar", Count = 1) %>%
+  dplyr::select(Legend, Count)
+
+# Pull Illegal Dumping from overall 311 data
+dumping <- DC311 %>%
+  filter(grepl("Illegal Dumping", SERVICECODEDESCRIPTION)) %>%
+  mutate(Legend = "Dumping", Count = 1) %>%
+  dplyr::select(Legend, Count)
+
+# Maybe drunk people are more likely to tag?
+liquourLicenses <- st_read("https://opendata.arcgis.com/datasets/cabe9dcef0b344518c7fae1a3def7de1_5.geojson") %>%
+  st_transform(crs) %>%
+  mutate(Legend = "Liquour", Count = 1) %>%
+  dplyr::select(Legend, Count)
+
+# 311 complaints regarding streetlight outages
+streetlights <- DC311%>%
+  filter(grepl("Streetlight", SERVICECODEDESCRIPTION)) %>%
+  mutate(Legend = "StreetlightOut", Count = 1) %>%
+  dplyr::select(Legend, Count)
+
+# Major crimes 
+thefts <- st_read("https://opendata.arcgis.com/datasets/6af5cb8dc38e4bcbac8168b27ee104aa_38.geojson") %>%
+  st_transform(crs) %>%
+	filter(grepl('THEFT',OFFENSE)) %>%
+	mutate(Legend = "Theft", Count = 1) %>%
+	dplyr::select(Legend, Count) 
+
+
+allPredictors <- rbind(abandonedCars, dumping, liquourLicenses, streetlights, thefts)
 ```
 
 #### How we aggregate a feature to our fishnet
 
 This is an important chunk of code with some unfamiliar lines. We'll step through it.
 
-```{r}
+```{r echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 
-vars_net <- abandonCars %>%
+vars_net <- allPredictors %>%
   st_join(., fishnet, join=st_within) %>%
   st_drop_geometry() %>%
   group_by(uniqueID, Legend) %>%
@@ -233,8 +242,8 @@ vars_net <- abandonCars %>%
   na.omit() %>%
   ungroup()
 
-# vars_net <- abandonCars %>%
-#   spatially join abandonCars points to the fishnet polygon they are within %>%
+# vars_net <- allPredictors %>%
+#   spatially join allPredictors points to the fishnet polygon they are within %>%
 #   drop the geometry attribute %>%
 #   group_by each cells ID and the name of the feature %>%
 #   summarize count the number of each point per grid cell %>%
@@ -258,11 +267,24 @@ st_coid <- st_centroid
 ## create NN from abandoned cars
 vars_net <- vars_net %>%
     mutate(Abandoned_Cars.nn = nn_function(st_c(st_coid(vars_net)), 
-                                           st_c(abandonCars),
-                                           k = 3))
+                                           st_c(abandonedCars),
+                                           k = 5)) %>%
+    mutate(Dumping.nn = nn_function(st_c(st_coid(vars_net)), 
+                                           st_c(dumping),
+                                           k = 5)) %>%
+    mutate(liquourLicenses.nn = nn_function(st_c(st_coid(vars_net)), 
+                                           st_c(liquourLicenses),
+                                           k = 5)) %>%
+    mutate(streetlights.nn = nn_function(st_c(st_coid(vars_net)), 
+                                           st_c(streetlights),
+                                           k = 5)) %>%
+    mutate(thefts.nn = nn_function(st_c(st_coid(vars_net)), 
+                                           st_c(thefts),
+                                           k = 5))
+  
+  
 ```
 
-> What changes if we make `k` a different number?
 
 ```{r}
 ## Visualize the NN feature
@@ -273,7 +295,7 @@ vars_net.long.nn <-
 ggplot() +
       geom_sf(data = vars_net.long.nn, aes(fill=value), colour=NA) +
       scale_fill_viridis(name="NN Distance") +
-      labs(title="Abandoned Car NN Distance") +
+      labs(title="Nearest Neighbor Risk Factors") +
       mapTheme()
 ```
 
@@ -485,6 +507,9 @@ as.data.frame(burg_KD.1000) %>%
      labs(title = "Kernel density of 2017 burglaries") +
      mapTheme(title_size = 14)
 ```
+
+
+
 
 ## Get 2018 crime data
 
