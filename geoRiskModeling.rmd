@@ -202,7 +202,27 @@ thefts <- st_read("https://opendata.arcgis.com/datasets/6af5cb8dc38e4bcbac8168b2
 	mutate(Legend = "thefts", Count = 1) %>%
 	dplyr::select(Legend, Count) 
 
+
+# create single dataset for all predictors
+allPredictors <- rbind(abandonedCars, Illegal_Dumping, liquourLicenses, metroStops, streetlightsOut, thefts)
 ```
+#### Raw predictor variables
+```{r}
+vars <- unique(allPredictors$Legend)
+mapList <- list()
+
+for(i in vars){
+  mapList[[i]] <- 
+    ggplot() +
+      geom_sf(data = DCBoundary) +
+      geom_sf(data = filter(allPredictors, Legend == i), size = 0.2) +
+      labs(title=i) +
+      mapTheme()}
+
+do.call(grid.arrange,c(mapList, ncol = 3, top = "Risk factors"))
+```
+
+
 
 #### How we aggregate a feature to our fishnet
 
@@ -210,7 +230,7 @@ This is an important chunk of code with some unfamiliar lines. We'll step throug
 
 ```{r echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 
-vars_net <- rbind(abandonedCars, Illegal_Dumping, liquourLicenses, metroStops, streetlightsOut, thefts) %>%
+vars_net <- allPredictors %>%
   st_join(., fishnet, join=st_within) %>%
   st_drop_geometry() %>%
   group_by(uniqueID, Legend) %>%
@@ -435,17 +455,73 @@ ggplot(correlation.long, aes(Value, countGraffiti)) +
 
 Leave One Group Out CV on spatial features
 
+```{r}
+# Edited function from textbook to get rid of hard-coded variable
+crossValidate <- function(dataset, id, dependentVariable, indVariables) {
+  
+  allPredictions <- data.frame()
+  cvID_list <- unique(dataset[[id]])
+  
+  for (i in cvID_list) {
+    
+    thisFold <- i
+    cat("This hold out fold is", thisFold, "\n")
+    
+    fold.train <- filter(dataset, dataset[[id]] != thisFold) %>% as.data.frame() %>% 
+      dplyr::select(id, geometry, indVariables, dependentVariable)
+    fold.test  <- filter(dataset, dataset[[id]] == thisFold) %>% as.data.frame() %>% 
+      dplyr::select(id, geometry, indVariables, dependentVariable)
+    
+    regression <-
+      glm(paste0(dependentVariable,"~."), family = "poisson", 
+          data = fold.train %>% 
+            dplyr::select(-geometry, -id))
+    
+    thisPrediction <- 
+      mutate(fold.test, Prediction = predict(regression, fold.test, type = "response"))
+    
+    allPredictions <-
+      rbind(allPredictions, thisPrediction)
+    
+  }
+  return(st_sf(allPredictions))
+}
+
+```
+
+
 ```{r sults='hide'}
 
 ## define the variables we want
 reg.vars <- c("Abandoned_Cars.nn", "Illegal_Dumping.nn", 
-              "liquourLicenses.nn", "MetroStops", "streetlightsOut.nn", "thefts.nn")
+              "liquourLicenses.nn", "metroStops.nn", "streetlightsOut.nn", "thefts.nn")
 
 reg.ss.vars <- c("Abandoned_Cars.nn", "Illegal_Dumping.nn", 
-                "liquourLicenses.nn", "MetroStops", "streetlightsOut.nn", "thefts.nn",
+                "liquourLicenses.nn", "metroStops.nn", "streetlightsOut.nn", "thefts.nn",
                 "graffiti.isSig", "graffiti.isSig.dist")
 
 ## RUN REGRESSIONS
+reg.cv <- crossValidate(
+  dataset = final_net,
+  id = "cvID",
+  dependentVariable = "countGraffiti",
+  indVariables = reg.vars) %>%
+    dplyr::select(cvID = cvID, countGraffiti, Prediction, geometry)
+
+reg.ss.cv <- crossValidate(
+  dataset = final_net,
+  id = "cvID",
+  dependentVariable = "countGraffiti",
+  indVariables = reg.ss.vars) %>%
+    dplyr::select(cvID = cvID, countGraffiti, Prediction, geometry)
+  
+reg.spatialCV <- crossValidate(
+  dataset = final_net,
+  id = "name",
+  dependentVariable = "countGraffiti",
+  indVariables = reg.vars) %>%
+    dplyr::select(cvID = name, countGraffiti, Prediction, geometry)
+
 reg.ss.spatialCV <- crossValidate(
   dataset = final_net,
   id = "name",                           
@@ -454,50 +530,108 @@ reg.ss.spatialCV <- crossValidate(
     dplyr::select(cvID = name, countGraffiti, Prediction, geometry)
 ```
 
+#### Test Accuracy and Generalizability
+```{r}
+reg.summary <- 
+  rbind(
+    mutate(reg.cv,           Error = Prediction - countGraffiti,
+                             Regression = "Random k-fold CV: Just Risk Factors"),
+                             
+    mutate(reg.ss.cv,        Error = Prediction - countGraffiti,
+                             Regression = "Random k-fold CV: Spatial Process"),
+    
+    mutate(reg.spatialCV,    Error = Prediction - countGraffiti,
+                             Regression = "Spatial LOGO-CV: Just Risk Factors"),
+                             
+    mutate(reg.ss.spatialCV, Error = Prediction - countGraffiti,
+                             Regression = "Spatial LOGO-CV: Spatial Process")) %>%
+    st_sf() 
+```
+
+
 ```{r}
 # calculate errors by NEIGHBORHOOD
 error_by_reg_and_fold <- 
-  reg.ss.spatialCV %>%
-    group_by(cvID) %>% 
+  reg.summary %>%
+    group_by(Regression, cvID) %>% 
     summarize(Mean_Error = mean(Prediction - countGraffiti, na.rm = T),
               MAE = mean(abs(Mean_Error), na.rm = T),
               SD_MAE = mean(abs(Mean_Error), na.rm = T)) %>%
   ungroup()
 
-error_by_reg_and_fold %>% 
-  arrange(desc(MAE))
-error_by_reg_and_fold %>% 
-  arrange(MAE)
-
 ## plot histogram of OOF (out of fold) errors
 error_by_reg_and_fold %>%
   ggplot(aes(MAE)) + 
     geom_histogram(bins = 30, colour="black", fill = "#FDE725FF") +
-  scale_x_continuous(breaks = seq(0, 11, by = 1)) + 
-    labs(title="Distribution of MAE", subtitle = "LOGO-CV",
-         x="Mean Absolute Error", y="Count") 
+    facet_wrap(~Regression) +  
+    geom_vline(xintercept = 0) + scale_x_continuous(breaks = seq(0, 8, by = 1)) + 
+    labs(title="Distribution of MAE", subtitle = "k-fold cross validation vs. LOGO-CV",
+         x="Mean Absolute Error", y="Count") +
+    plotTheme()
 ```
+#### MAE & MAPE by regression
+```{r}
+st_drop_geometry(error_by_reg_and_fold) %>%
+  group_by(Regression) %>% 
+    summarize(Mean_MAE = round(mean(MAE), 2),
+              SD_MAE = round(sd(MAE), 2)) %>%
+  kable() %>%
+    kable_styling("striped", full_width = F) %>%
+    row_spec(2, color = "black", background = "#FDE725FF") %>%
+    row_spec(4, color = "black", background = "#FDE725FF")
+```
+## Racial Context
+```{r}
+census_var2017 <- c("B25026_001E", "B02001_002E", "B19013_001E", "B25058_001E", "B06012_002E")
+tractsDC.17 <- get_acs(geography = "tract", 
+                           variables = census_var2017, 
+                           year=2017, 
+                           state=11999,
+                           geometry=TRUE, 
+                           output="wide") %>%
+	dplyr::select(-geometry, -B25026_001M, -B02001_002M, -B19013_001M, -B25058_001M, -B06012_002M) %>% # Remove margin of error columns
+	st_transform(crs) %>%
+  rename(TotalPop = B25026_001E, 
+  			 Whites = B02001_002E,
+         MedHHInc = B19013_001E, 
+  			 MedRent = B25058_001E,
+         TotalPoverty = B06012_002E) %>%
+  #dplyr::select(-NAME, -starts_with("B")) %>%
+  mutate(pctWhite = ifelse(TotalPop > 0, Whites / TotalPop,0),
+         pctPoverty = ifelse(TotalPop > 0, TotalPoverty / TotalPop, 0),
+         year = "2017") %>%
+	mutate(pctWhite.scaled = pctWhite * 100,
+				 pctPoverty.scaled = pctPoverty * 100,
+				 raceContext = ifelse(pctWhite > .5, "Majority_White", "Majority_Non_White")) %>%
+  dplyr::select(-Whites, -TotalPoverty, -NAME)
+```
+### Mean Absolute Error by Majority/Minority White Tracts
+```{r}
+
+```
+
+
 
 ## Density vs predictions
 
-The `spatstat` function gets us kernal density estimates with varying search radii.
+The `spatstat` function gets us kernel density estimates with varying search radii.
 
 Note that the code here is *different* than in the book - it has been updated to keep up with changes in packages.
 
 ```{r}
 # demo of kernel width
-burg_ppp <- as.ppp(st_coordinates(burglaries), W = st_bbox(final_net))
-burg_KD.1000 <- spatstat.core::density.ppp(burg_ppp, 1000)
-burg_KD.1500 <- spatstat.core::density.ppp(burg_ppp, 1500)
-burg_KD.2000 <- spatstat.core::density.ppp(burg_ppp, 2000)
-burg_KD.df <- rbind(
-  mutate(data.frame(rasterToPoints(mask(raster(burg_KD.1000), as(neighborhoods, 'Spatial')))), Legend = "1000 Ft."),
-  mutate(data.frame(rasterToPoints(mask(raster(burg_KD.1500), as(neighborhoods, 'Spatial')))), Legend = "1500 Ft."),
-  mutate(data.frame(rasterToPoints(mask(raster(burg_KD.2000), as(neighborhoods, 'Spatial')))), Legend = "2000 Ft.")) 
+graf_ppp <- as.ppp(st_coordinates(graffiti), W = st_bbox(final_net))
+graf_KD.1000 <- spatstat.core::density.ppp(graf_ppp, 1000)
+graf_KD.1500 <- spatstat.core::density.ppp(graf_ppp, 1500)
+graf_KD.2000 <- spatstat.core::density.ppp(graf_ppp, 2000)
+graf_KD.df <- rbind(
+  mutate(data.frame(rasterToPoints(mask(raster(graf_KD.1000), as(neighborhoods, 'Spatial')))), Legend = "1000 Ft."),
+  mutate(data.frame(rasterToPoints(mask(raster(graf_KD.1500), as(neighborhoods, 'Spatial')))), Legend = "1500 Ft."),
+  mutate(data.frame(rasterToPoints(mask(raster(graf_KD.2000), as(neighborhoods, 'Spatial')))), Legend = "2000 Ft.")) 
 
-burg_KD.df$Legend <- factor(burg_KD.df$Legend, levels = c("1000 Ft.", "1500 Ft.", "2000 Ft."))
+graf_KD.df$Legend <- factor(graf_KD.df$Legend, levels = c("1000 Ft.", "1500 Ft.", "2000 Ft."))
 
-ggplot(data=burg_KD.df, aes(x=x, y=y)) +
+ggplot(data=graf_KD.df, aes(x=x, y=y)) +
   geom_raster(aes(fill=layer)) + 
   facet_wrap(~Legend) +
   coord_sf(crs=st_crs(final_net)) + 
@@ -508,16 +642,23 @@ ggplot(data=burg_KD.df, aes(x=x, y=y)) +
 
 ```{r}
 
-as.data.frame(burg_KD.1000) %>%
+as.data.frame(graf_KD.1000) %>%
   st_as_sf(coords = c("x", "y"), crs = st_crs(final_net)) %>%
   aggregate(., final_net, mean) %>%
    ggplot() +
      geom_sf(aes(fill=value)) +
-     geom_sf(data = sample_n(burglaries, 1500), size = .5) +
+     geom_sf(data = sample_n(graffiti, 1500), size = .5) +
      scale_fill_viridis(name = "Density") +
-     labs(title = "Kernel density of 2017 burglaries") +
+     labs(title = "Kernel density of 2017 graffiti") +
      mapTheme(title_size = 14)
 ```
+
+
+
+
+
+
+
 
 
 
