@@ -244,28 +244,31 @@ vars_net <- rbind(abandonedCars, Illegal_Dumping, liquourLicenses, metroStops, s
 st_c    <- st_coordinates
 st_coid <- st_centroid
 
+# Get coordinates of fishnet centroids
+netCentroidCoords <- st_c(st_coid(vars_net))
+
+# Get coordinates for k-nearest neighbor functions below
+accoords <- st_c(abandonedCars)
+idcoords <- st_c(Illegal_Dumping)
+lqcoords <- st_c(liquourLicenses)
+mscoords <- st_c(metroStops)
+slcoords <- st_c(streetlightsOut)
+tcoords <- st_c(thefts)
+
+# Define number of nearest neighbors to look for
+k = 3
+                    
+
 ## create NN from abandoned cars
 vars_net <- vars_net %>%
-    mutate(Abandoned_Cars.nn = nn_function(st_c(st_coid(vars_net)), 
-                                           st_c(abandonedCars),
-                                           k = 3)) %>%
-    mutate(Illegal_Dumping.nn = nn_function(st_c(st_coid(vars_net)), 
-                                           st_c(Illegal_Dumping),
-                                           k = 3)) %>%
-    mutate(liquourLicenses.nn = nn_function(st_c(st_coid(vars_net)), 
-                                           st_c(liquourLicenses),
-                                           k = 3)) %>%
-    mutate(metroStops.nn = nn_function(st_c(st_coid(vars_net)), 
-                                           st_c(metroStops),
-                                           k = 3)) %>%
-    mutate(streetlightsOut.nn = nn_function(st_c(st_coid(vars_net)), 
-                                           st_c(streetlightsOut),
-                                           k = 3)) %>%
-    mutate(thefts.nn = nn_function(st_c(st_coid(vars_net)), 
-                                           st_c(thefts),
-                                           k = 3))
-  
-  
+    mutate(Abandoned_Cars.nn = nn_function(netCentroidCoords, accoords, k), 
+           Illegal_Dumping.nn = nn_function(netCentroidCoords, idcoords, k),
+           liquourLicenses.nn = nn_function(netCentroidCoords, lqcoords, k),
+           metroStops.nn = nn_function(netCentroidCoords, mscoords, k),
+           streetlightsOut.nn = nn_function(netCentroidCoords, slcoords, k),
+           thefts.nn = nn_function(netCentroidCoords, tcoords, k)
+          )                                             
+
 ```
 
 
