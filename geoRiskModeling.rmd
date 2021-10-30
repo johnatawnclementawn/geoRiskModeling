@@ -138,7 +138,7 @@ fishnet <-
 
 ### Aggregate points to the fishnet
 
-```{r graffitiAggregate, echo=TRUE echo=TRUE, message=FALSE, warning=FALSE}
+```{r graffitiAggregate, echo=TRUE, message=FALSE, warning=FALSE}
 ## add a value of 1 to each crime, sum them with aggregate
 
 crime_net <- 
@@ -208,10 +208,10 @@ thefts <- st_read("https://opendata.arcgis.com/datasets/6af5cb8dc38e4bcbac8168b2
 
 
 # create single dataset for all predictors
-allPredictors <- rbind(abandonedCars, Illegal_Dumping, liquourLicenses, metroStops, streetlightsOut, thefts)
+allPredictors <- rbind( Illegal_Dumping, liquourLicenses, metroStops, streetlightsOut, thefts)
 ```
 #### Raw predictor variables
-```{r}
+```{r predictorMaps, echo=TRUE, message=FALSE, warning=FALSE}
 vars <- unique(allPredictors$Legend)
 mapList <- list()
 
@@ -232,7 +232,7 @@ do.call(grid.arrange,c(mapList, ncol = 3, top = "Risk factors"))
 
 This is an important chunk of code with some unfamiliar lines. We'll step through it.
 
-```{r echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+```{r joinPredictors, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 
 vars_net <- allPredictors %>%
   st_join(., fishnet, join=st_within) %>%
@@ -263,7 +263,7 @@ vars_net <- allPredictors %>%
 
 > Review: what is NN and what does `k` represent in this function?
 
-```{r}
+```{r calcNN, echo=TRUE, message=FALSE, warning=FALSE}
 # convinience to reduce length of function names.
 st_c    <- st_coordinates
 st_coid <- st_centroid
@@ -285,7 +285,7 @@ k = 3
 
 ## create NN from abandoned cars
 vars_net <- vars_net %>%
-    mutate(Abandoned_Cars.nn = nn_function(netCentroidCoords, accoords, k), 
+    mutate(#Abandoned_Cars.nn = nn_function(netCentroidCoords, accoords, k), 
            Illegal_Dumping.nn = nn_function(netCentroidCoords, idcoords, k),
            liquourLicenses.nn = nn_function(netCentroidCoords, lqcoords, k),
            metroStops.nn = nn_function(netCentroidCoords, mscoords, k),
@@ -296,7 +296,7 @@ vars_net <- vars_net %>%
 ```
 
 
-```{r}
+```{r nnFig, echo=TRUE, message=FALSE, warning=FALSE}
 ## Visualize the NN feature
 vars_net.long.nn <- 
   dplyr::select(vars_net, ends_with(".nn")) %>%
@@ -320,7 +320,7 @@ do.call(grid.arrange,c(mapList, ncol = 3, top = "Average Distance to nearest nei
 
 Since the counts were aggregated to each cell by `uniqueID` we can use that to join the counts to the fishnet.
 
-```{r}
+```{r nnFishnet, echo=TRUE, message=FALSE, warning=FALSE}
 ## important to drop the geometry from joining features
 final_net <-
   left_join(crime_net, st_drop_geometry(vars_net), by="uniqueID") 
@@ -333,7 +333,7 @@ Using spatial joins to join *centroids* of fishnets to polygon for neighborhoods
 
 > What issues arise when we try to join polygons to polygons in space? End up with weird slices of polygons
 
-```{r}
+```{r nbhdFishnet, echo=TRUE, message=FALSE, warning=FALSE}
 
 final_net <-
   st_centroid(final_net) %>%
@@ -360,7 +360,7 @@ A little in depth version of the chunk below can be found:
 
 Mendez C. (2020). Spatial autocorrelation analysis in R. R Studio/RPubs. Available at <https://rpubs.com/quarcs-lab/spatial-autocorrelation>
 
-```{r}
+```{r localMoransPrep, echo=TRUE, message=FALSE, warning=FALSE}
 ## generates warnings from PROJ issues
 ## {spdep} to make polygon to neighborhoods... 
 final_net.nb <- poly2nb(as_Spatial(final_net), queen=TRUE)
@@ -370,7 +370,7 @@ final_net.weights <- nb2listw(final_net.nb, style="W", zero.policy=TRUE)
 # print(final_net.weights, zero.policy=TRUE)
 ```
 
-```{r}
+```{r localMorans, echo=TRUE, message=FALSE, warning=FALSE}
 ## see ?localmoran
 local_morans <- localmoran(final_net$countGraffiti, final_net.weights, zero.policy=TRUE) %>% 
   as.data.frame()
@@ -393,7 +393,7 @@ This is a complex code chunk - it's a loop which builds ggplots of local Moran's
 
 > What does a significant hot spot tell us about the distribution of burglaries?
 
-```{r}
+```{r moransPlot, echo=TRUE, message=FALSE, warning=FALSE}
 ## This is just for plotting
 vars <- unique(final_net.localMorans$Variable)
 varList <- list()
@@ -414,7 +414,7 @@ do.call(grid.arrange,c(varList, ncol = length(vars), top = "Local Morans I stati
 
 Using NN distance to a hot spot location
 
-```{r}
+```{r predictedHotSpots, echo=TRUE, message=FALSE, warning=FALSE}
 # generates warning from NN
 final_net <- final_net %>% 
   mutate(graffiti.isSig = 
@@ -433,7 +433,7 @@ ggplot() +
 ```
 
 ## Correlation Small Multiples
-```{r correlationSM, fig.height=10, fig.width= 6}
+```{r correlationSM, fig.height=10, fig.width= 6, echo=TRUE, message=FALSE, warning=FALSE}
 correlation.long <-
   st_drop_geometry(final_net) %>%
     dplyr::select(-uniqueID, -cvID, -name, -District) %>%
@@ -459,7 +459,7 @@ ggplot(correlation.long, aes(Value, countGraffiti)) +
 
 Leave One Group Out CV on spatial features
 
-```{r}
+```{r LOGOCVfunc, echo=TRUE, message=FALSE, warning=FALSE}
 # Edited function from textbook to get rid of hard-coded variable
 crossValidate <- function(dataset, id, dependentVariable, indVariables) {
   
@@ -494,15 +494,20 @@ crossValidate <- function(dataset, id, dependentVariable, indVariables) {
 ```
 
 
-```{r sults='hide'}
+```{r buildModels, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 
 ## define the variables we want
-reg.vars <- c("Abandoned_Cars.nn", "Illegal_Dumping.nn", 
-              "liquourLicenses.nn", "metroStops.nn", "streetlightsOut.nn", "thefts.nn")
+# reg.vars <- c("Abandoned_Cars.nn", "Illegal_Dumping.nn", 
+#               "liquourLicenses.nn", "metroStops.nn", "streetlightsOut.nn", "thefts.nn")
+# 
+# reg.ss.vars <- c("Abandoned_Cars.nn", "Illegal_Dumping.nn", 
+#                 "liquourLicenses.nn", "metroStops.nn", "streetlightsOut.nn", "thefts.nn",
+#                 "graffiti.isSig", "graffiti.isSig.dist")
+# WITHOUT ABANDONED CARS
+reg.vars <- c("Illegal_Dumping.nn", "liquourLicenses.nn", "metroStops.nn", "streetlightsOut.nn", "thefts.nn")
 
-reg.ss.vars <- c("Abandoned_Cars.nn", "Illegal_Dumping.nn", 
-                "liquourLicenses.nn", "metroStops.nn", "streetlightsOut.nn", "thefts.nn",
-                "graffiti.isSig", "graffiti.isSig.dist")
+reg.ss.vars <- c("Illegal_Dumping.nn", "liquourLicenses.nn", "metroStops.nn", "streetlightsOut.nn", 
+                 "thefts.nn", "graffiti.isSig", "graffiti.isSig.dist")
 
 ## RUN REGRESSIONS
 reg.cv <- crossValidate(
@@ -535,7 +540,7 @@ reg.ss.spatialCV <- crossValidate(
 ```
 
 #### Test Accuracy and Generalizability
-```{r}
+```{r modelsummaries, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 reg.summary <- 
   rbind(
     mutate(reg.cv,           Error = Prediction - countGraffiti,
@@ -553,7 +558,7 @@ reg.summary <-
 ```
 
 
-```{r}
+```{r modelSumFigs, echo=TRUE, message=FALSE, warning=FALSE}
 # calculate errors by NEIGHBORHOOD
 error_by_reg_and_fold <- 
   reg.summary %>%
@@ -573,8 +578,9 @@ error_by_reg_and_fold %>%
          x="Mean Absolute Error", y="Count") +
     plotTheme()
 ```
-#### MAE & MAPE by regression
-```{r}
+
+#### MAE by regression
+```{r modelMAEs, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 st_drop_geometry(error_by_reg_and_fold) %>%
   group_by(Regression) %>% 
     summarize(Mean_MAE = round(mean(MAE), 2),
@@ -585,7 +591,7 @@ st_drop_geometry(error_by_reg_and_fold) %>%
     row_spec(4, color = "black", background = "#FDE725FF")
 ```
 ## Racial Context
-```{r}
+```{r Census2017, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 census_var2017 <- c("B25026_001E", "B02001_002E", "B19013_001E", "B25058_001E", "B06012_002E")
 tractsDC.17 <- get_acs(geography = "tract", 
                            variables = census_var2017, 
@@ -610,7 +616,7 @@ tractsDC.17 <- get_acs(geography = "tract",
   dplyr::select(-Whites, -TotalPoverty, -NAME)
 ```
 ### Mean Errors by Majority/Minority White Tracts
-```{r}
+```{r racialTractErrors, echo=TRUE, message=FALSE, warning=FALSE}
 reg.summary %>%
   filter(str_detect(Regression, "LOGO")) %>%
   st_centroid() %>%
@@ -634,7 +640,7 @@ The `spatstat` function gets us kernel density estimates with varying search rad
 
 Note that the code here is *different* than in the book - it has been updated to keep up with changes in packages.
 
-```{r}
+```{r kd_dependentVar, echo=TRUE, message=FALSE, warning=FALSE}
 # demo of kernel width
 graf_ppp <- as.ppp(st_coordinates(graffiti), W = st_bbox(final_net))
 graf_KD.1000 <- spatstat.core::density.ppp(graf_ppp, 1000)
@@ -656,8 +662,7 @@ ggplot(data=graf_KD.df, aes(x=x, y=y)) +
   mapTheme(title_size = 14)
 ```
 
-```{r}
-
+```{r DV_kd_2017, echo=TRUE, message=FALSE, warning=FALSE}
 as.data.frame(graf_KD.1000) %>%
   st_as_sf(coords = c("x", "y"), crs = st_crs(final_net)) %>%
   aggregate(., final_net, mean) %>%
@@ -671,19 +676,11 @@ as.data.frame(graf_KD.1000) %>%
 
 
 
-
-
-
-
-
-
-
-
 ## Get 2018 crime data
 
 Let's see how our model performed relative to KD on the following year's data.
 
-```{r}
+```{r crime2018, echo=TRUE, message=FALSE, warning=FALSE}
 DC311_18 <- st_read("https://opendata.arcgis.com/datasets/2a46f1f1aad04940b83e75e744eb3b09_9.geojson") %>%
   st_transform(crs) %>%
   dplyr::select(-c("INSPECTIONFLAG", "INSPECTIONDATE", "INSPECTORNAME"))
@@ -704,7 +701,7 @@ crime_net_18 <-
 
 ```
 
-```{r}
+```{r graffiti2018_kd, echo=TRUE, message=FALSE, warning=FALSE}
 graf_KDE_sf <- as.data.frame(graf_KD.1000) %>%
   st_as_sf(coords = c("x", "y"), crs = st_crs(final_net)) %>%
   aggregate(., final_net, mean) %>%
@@ -725,7 +722,7 @@ graf_KDE_sf <- as.data.frame(graf_KD.1000) %>%
 
 Note that this is different from the book, where we pull a model out of a list of models we've created. For your homework, you'll be creating multiple models.
 
-```{r}
+```{r graffiti2017_risk, echo=TRUE, message=FALSE, warning=FALSE}
 graf_risk_sf <-
   reg.ss.spatialCV %>%
   mutate(label = "Risk Predictions",
@@ -745,7 +742,7 @@ graf_risk_sf <-
 
 We don't do quite as well because we don't have very many features, but still pretty good.
 
-```{r}
+```{r RiskPred_v_KD, echo=TRUE, message=FALSE, warning=FALSE}
 rbind(graf_KDE_sf, graf_risk_sf) %>%
   na.omit() %>%
   gather(Variable, Value, -label, -Risk_Category, -geometry) %>%
