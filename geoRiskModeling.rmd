@@ -8,7 +8,7 @@ output:
     highlight: haddock
     toc: true
     toc_float:
-      collapsed: false
+      collapsed: true
       smooth_scroll: true
     code_folding: hide
 ---
@@ -105,7 +105,7 @@ graffiti <- DC311 %>%
 ```
 
 ### Visualizing Distribution of Graffiti   
-In the figure below, we have mapped both the raw locations of all 311 Graffiti removal complaints and the density of complaints across the Washington, DC for 2017.   
+In the figure below, we have mapped both the raw locations of all 311 Graffiti removal complaints and the density of complaints across the Washington, DC for 2017. We believe that these data are subject to selection bias because of the nature of 311 complaints, particularly about graffiti. First, data from 311 complaints are only collected when constituents report a complaint via phone or an online reporting application. Further, the definition of graffiti could vary from constituent to constituent, with some people considering it art rather than graffiti.    
 
 ```{r pointDens, echo=TRUE, fig.height=6, fig.width=7, message=FALSE, warning=FALSE}
 
@@ -480,11 +480,11 @@ crossValidate <- function(dataset, id, dependentVariable, indVariables) {
 
 ```
 
-This chunk builds four models:
-1. Random K-fold Cross Validation (CV) on just the risk factors
-2. Random K-fold CV on risk factors and spatial process (significant areas of graffiti complaints)
-3. Spatial leave-one-group-out (LOGO) CV on just risk factors
-4. Spatial LOGO-CV on risk factors and spatial process
+This chunk builds four models:   
+1. Random K-fold Cross Validation (CV) on just the risk factors   
+2. Random K-fold CV on risk factors and spatial process (significant areas of graffiti complaints)   
+3. Spatial leave-one-group-out (LOGO) CV on just risk factors   
+4. Spatial LOGO-CV on risk factors and spatial process   
 ```{r buildModels, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 
 ## define the variables we want
@@ -547,7 +547,9 @@ reg.summary <-
     st_sf() 
 ```
 
-### Model evaluation   
+# Results
+
+## Model evaluation   
 To determine the effectiveness of our models, we have visualized the mean absolute errors (MAE) by each model. The models that include spatial process are generally better at predicting (smaller MAE) than those just predicting graffiti complaint locations using the risk factors. Our spatial LOGO-CV results contain higher MAE’s because that test is much more conservative than the random k-fold CV test [1].   
 
 ```{r modelSumFigs, echo=TRUE, message=FALSE, warning=FALSE, fig.width= 8, fig.height= 4}
@@ -612,13 +614,7 @@ tractsDC.17 <- get_acs(geography = "tract",
 				 raceContext = ifelse(pctWhite > .5, "Majority_White", "Majority_Non_White")) %>%
   dplyr::select(-Whites, -TotalPoverty, -NAME)
 
-ggplot() +
-  geom_sf(data = tractsDC.17, aes(fill = raceContext)) +
-  scale_fill_viridis(discrete = TRUE) +
-  labs(title = "Racial context of Washington DC") +
-  mapTheme()
-
-reg.summary %>%
+raceTbl <- reg.summary %>%
   filter(str_detect(Regression, "LOGO")) %>%
   st_centroid() %>%
   st_join(tractsDC.17) %>%
@@ -630,8 +626,16 @@ reg.summary %>%
   kable(caption = "Mean error by neighborhood racial demographics") %>%
   kable_styling("striped", full_width = F)
 
-
+raceTbl
 ```
+```{r race figure, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+ggplot() +
+  geom_sf(data = tractsDC.17, aes(fill = raceContext)) +
+  scale_fill_viridis(discrete = TRUE) +
+  labs(title = "Racial context of Washington DC") +
+  mapTheme()
+```
+
 
 ### Future graffiti complaints
 
@@ -733,7 +737,9 @@ rbind(graf_KDE_sf, graf_risk_sf) %>%
       scale_fill_viridis(discrete = TRUE) +
       labs(title = "Risk prediction vs. Kernel density, 2018 graffiti") +
       theme(axis.text.x = element_text(angle = 45, vjust = 0.5))
-```
+```   
+
+
 # Conclusion   
 The goal of building a risk prediction model is to make more granular decisions than would be allowed by using the traditional kernel density method. In some respects, our model can do this. It accounts for much more of the ‘cool’ areas where graffiti complaints occur. However, it is marginally less effective at encompassing the graffiti hotspots. To this end, it appears that the model may be overfit to the 2017 data and not generalizable to future changes in the distribution of the graffiti hotspots. The possible addition of the location of vacant buildings may prove to be a useful addition as a predictor variable.   
 Without further tuning and possibly adding more predictors, I would not recommend that this model be put into production. If the model were to be operationalized, there is an important distinction between its use to predict the location of where people will complain about graffiti versus where graffiti actually is in the District. Our current efforts are more aligned with the former case, which is okay if the DC Government is trying to deploy resources to clean areas of high graffiti complaints. However, if this model were to be used to direct police resources to target areas of heavy tagging, it may unfairly target certain groups of people based. For instance, the current model vastly underpredicts in majority white neighborhoods, but overpredicts in majority non-white neighborhoods.   
