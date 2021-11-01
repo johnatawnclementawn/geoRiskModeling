@@ -14,7 +14,7 @@ output:
 ---
 # Introduction   
 
-This workflow is primarily designed for city or county police, sheriff, and/or 311 departments. Traditionally, these departments have either used rudimentary methods of predicting where crimes or disturbances will occur or not used any predictions at all. The methods of prediction usually entail hot-spot mapping through kernel density analysis. In this workflow, we will try to build a model using regression techniques to predict where crimes will occur, and thus allow for more effective and efficient deployment of city or county resources. The R-markdown file is built for someone who has some experience with R and so they can ‘plug-and-play’ the data for their respective use case. The code is available by clicking on the **code** button.   
+This workflow is primarily designed for city or county police, sheriff, and/or 311 departments. Traditionally, these departments have either used rudimentary methods of predicting where crimes or disturbances will occur or not used any predictions at all. The methods of prediction usually entail hot-spot mapping through kernel density analysis. In this workflow, we will try to build a model using regression techniques to predict where crimes will occur, and thus allow for more effective and efficient deployment of city or county resources.    
 
 We will build the model using data from 2017, test its accuracy using cross validation techniques, and then determine if it generalizable to future scenarios by testing it using data form 2018. We chose to model 311 Complaints about graffiti for its possible issues with selection bias. Said differently, what is classified as graffiti and what is classified as art is subjective. Therefore, we would expect to see some spatial clustering of graffiti complaints based on outside factors. This is what we will try to account for in our model.     
 
@@ -275,7 +275,7 @@ vars_net <- allPredictors %>%
 ```
 
 ### Nearest Neighbor Features
-We then calculate the average distance to the `k` number of nearest neighbors of each predictor variable to the centroid of the fishnet cell. These values are then visualized.   
+We then calculate the average distance to the `k` number of nearest neighbors for each predictor variable to the centroid of the fishnet cell. These values are then visualized.   
 
 ```{r calcNN, echo=TRUE, message=FALSE, warning=FALSE}
 # convinience to reduce length of function names.
@@ -328,9 +328,8 @@ for(i in vars){
 do.call(grid.arrange,c(mapList, ncol = 3, top = "Average Distance to nearest neighbor(s) risk factors by fishnet"))
 ```
 
-## Join NN feature to our fishnet
-
-Since the counts were aggregated to each cell by `uniqueID` we can use that to join the counts to the fishnet.
+#### Join NN feature to our fishnet
+Now that we have created the nearest neighbor features, we will assign those features to their respective fishnet cell. 
 
 ```{r nnFishnet, echo=TRUE, message=FALSE, warning=FALSE}
 ## important to drop the geometry from joining features
@@ -339,11 +338,8 @@ final_net <-
 
 ```
 
-### Join in areal data
-
-Using spatial joins to join *centroids* of fishnets to polygon for neighborhoods and districts.
-
-> What issues arise when we try to join polygons to polygons in space? End up with weird slices of polygons
+#### Join in areal data
+We will also join the neighborhood and police district data to the fishnet cells.
 
 ```{r nbhdFishnet, echo=TRUE, message=FALSE, warning=FALSE}
 
@@ -359,12 +355,12 @@ final_net <-
 ```
 
 
-
-## Local Moran's I for fishnet grid cells
-
-using {spdep} package to to build neighborhood weights and list to calculate local Moran's I.
+### Local Moran's I   
+Moran's I is a test for spatial autocorrelation. While it can be used to measure neighborhood level spatial autocorrelation (global Moran’s I), here we use it to identify spatial autocorrelation at the local level. For each cell in our fishnet, we calculate the individual Moran’s I of its eight closest neighbors (Queen adjacency).   
 
 ```{r localMoransPrep, echo=TRUE, message=FALSE, warning=FALSE}
+#using {spdep} package to to build neighborhood weights and list to calculate local Moran's I.
+
 ## generates warnings from PROJ issues
 ## {spdep} to make polygon to neighborhoods... 
 final_net.nb <- poly2nb(as_Spatial(final_net), queen=TRUE)
@@ -375,9 +371,7 @@ final_net.weights <- nb2listw(final_net.nb, style="W", zero.policy=TRUE)
 
 # A little in depth version of the chunk below can be found:
 # Mendez C. (2020). Spatial autocorrelation analysis in R. R Studio/RPubs. Available at <https://rpubs.com/quarcs-lab/spatial-autocorrelation>
-```
 
-```{r localMorans, echo=TRUE, message=FALSE, warning=FALSE}
 ## see ?localmoran
 local_morans <- localmoran(final_net$countGraffiti, final_net.weights, zero.policy=TRUE) %>% 
   as.data.frame()
@@ -389,16 +383,13 @@ final_net.localMorans <-
   dplyr::select(Graffiti_Count = countGraffiti, 
                 Local_Morans_I = Ii, 
                 P_Value = `Pr(z != E(Ii))`) %>%
-  mutate(Significant_Hotspots = ifelse(P_Value <= 0.001, 1, 0)) %>%
+  mutate(Significant_Hotspots = ifelse(P_Value <= 0.05, 1, 0)) %>%
   gather(Variable, Value, -geometry)
   
 ```
 
-### Plotting local Moran's I results
-
-This is a complex code chunk - it's a loop which builds ggplots of local Moran's for each of your `vars`
-
-> What does a significant hot spot tell us about the distribution of burglaries?
+#### Plotting local Moran's I results
+The results of plotting local Moran’s I inform the decisions we make when building the model. We have already seen the Graffiti_Count plot but it is included here for reference. The Locan_Morans_I plot illustrates areas in which the Moran’s I test has identified local spatial autocorrelation, and thus local clustering. The P_Value plot indicates areas of significant local clustering. These values are extracted and highlighted by the Significant_Hotspots plot.   
 
 ```{r moransPlot, echo=TRUE, message=FALSE, warning=FALSE}
 ## This is just for plotting
@@ -416,11 +407,6 @@ for(i in vars){
 
 do.call(grid.arrange,c(varList, ncol = length(vars), top = "Local Morans I statistics, Graffiti"))
 ```
-
-## Distance to graffiti hot spots
-
-Using NN distance to a hot spot location
-
 ```{r predictedHotSpots, echo=TRUE, message=FALSE, warning=FALSE}
 # generates warning from NN
 final_net <- final_net %>% 
@@ -431,15 +417,11 @@ final_net <- final_net %>%
                        st_c(st_coid(filter(final_net, 
                                            graffiti.isSig == 1))), 
                        k = 1))
-
-ggplot() +
-      geom_sf(data = final_net, aes(fill=graffiti.isSig.dist), colour=NA) +
-      scale_fill_viridis(name="NN Distance") +
-      labs(title="Distance to Graffiti Hotspots") +
-      mapTheme()
 ```
 
-## Correlation Small Multiples
+### Correlation Small Multiples   
+The figures below illustrate the correlation between the predictor variables and the dependent variable, graffiti complaints. The line of best fit is displayed in orange.   
+
 ```{r correlationSM, fig.height=15, fig.width= 6, echo=TRUE, message=FALSE, warning=FALSE}
 correlation.long <-
   st_drop_geometry(final_net) %>%
@@ -462,11 +444,9 @@ ggplot(correlation.long, aes(Value, countGraffiti)) +
 ```
 
 
-## Modeling and CV
+## Modeling and Cross-Validation
 
-Leave One Group Out CV on spatial features
-
-```{r LOGOCVfunc, echo=TRUE, message=FALSE, warning=FALSE}
+```{r LOGOCVfunc, message=FALSE, warning=FALSE, include=FALSE}
 # Edited function from textbook to get rid of hard-coded variable
 crossValidate <- function(dataset, id, dependentVariable, indVariables) {
   
@@ -500,7 +480,11 @@ crossValidate <- function(dataset, id, dependentVariable, indVariables) {
 
 ```
 
-
+This chunk builds four models:
+1. Random K-fold Cross Validation (CV) on just the risk factors
+2. Random K-fold CV on risk factors and spatial process (significant areas of graffiti complaints)
+3. Spatial leave-one-group-out (LOGO) CV on just risk factors
+4. Spatial LOGO-CV on risk factors and spatial process
 ```{r buildModels, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 
 ## define the variables we want
@@ -546,7 +530,6 @@ reg.ss.spatialCV <- crossValidate(
     dplyr::select(cvID = name, countGraffiti, Prediction, geometry)
 ```
 
-#### Test Accuracy and Generalizability
 ```{r modelsummaries, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 reg.summary <- 
   rbind(
@@ -564,8 +547,10 @@ reg.summary <-
     st_sf() 
 ```
 
+### Model evaluation   
+To determine the effectiveness of our models, we have visualized the mean absolute errors (MAE) by each model. The models that include spatial process are generally better at predicting (smaller MAE) than those just predicting graffiti complaint locations using the risk factors. Our spatial LOGO-CV results contain higher MAE’s because that test is much more conservative than the random k-fold CV test [1].   
 
-```{r modelSumFigs, echo=TRUE, message=FALSE, warning=FALSE}
+```{r modelSumFigs, echo=TRUE, message=FALSE, warning=FALSE, fig.width= 8, fig.height= 4}
 # calculate errors by NEIGHBORHOOD
 error_by_reg_and_fold <- 
   reg.summary %>%
@@ -580,24 +565,29 @@ error_by_reg_and_fold %>%
   ggplot(aes(MAE)) + 
     geom_histogram(bins = 30, colour="black", fill = "#FDE725FF") +
     facet_wrap(~Regression) +  
-    geom_vline(xintercept = 0) + scale_x_continuous(breaks = seq(0, 8, by = 1)) + 
+    geom_vline(xintercept = 0) + scale_x_continuous(breaks = seq(0, 120, by = 10)) + 
     labs(title="Distribution of MAE", subtitle = "k-fold cross validation vs. LOGO-CV",
          x="Mean Absolute Error", y="Count") +
     plotTheme()
+
+
+cvtable <- st_drop_geometry(error_by_reg_and_fold) %>%
+                group_by(Regression) %>% 
+                  summarize(Mean_MAE = round(mean(MAE), 2),
+                            SD_MAE = round(sd(MAE), 2)) %>%
+                kable() %>%
+                  kable_styling("striped", full_width = F) %>%
+                  row_spec(2, color = "black", background = "#FDE725FF") %>%
+                  row_spec(4, color = "black", background = "#FDE725FF")
+
+cvtable
 ```
 
-#### MAE by regression
-```{r modelMAEs, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
-st_drop_geometry(error_by_reg_and_fold) %>%
-  group_by(Regression) %>% 
-    summarize(Mean_MAE = round(mean(MAE), 2),
-              SD_MAE = round(sd(MAE), 2)) %>%
-  kable() %>%
-    kable_styling("striped", full_width = F) %>%
-    row_spec(2, color = "black", background = "#FDE725FF") %>%
-    row_spec(4, color = "black", background = "#FDE725FF")
-```
-## Racial Context
+
+## Testing Generalizability   
+
+### Neighborhood Context   
+Below is a table of MAE values for majority white and non-white neighborhoods. The purpose of this is to test whether the model is overpredicting or underpredicting on neighborhoods of specific demographic make-up. As you can see, Washington DC is very segregated by race. It is important to be able to account for these differences. However, it seems like the model does a pretty lousy job at generalizing across racial boundaries.   
 ```{r Census2017, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 census_var2017 <- c("B25026_001E", "B02001_002E", "B19013_001E", "B25058_001E", "B06012_002E")
 tractsDC.17 <- get_acs(geography = "tract", 
@@ -621,9 +611,13 @@ tractsDC.17 <- get_acs(geography = "tract",
 				 pctPoverty.scaled = pctPoverty * 100,
 				 raceContext = ifelse(pctWhite > .5, "Majority_White", "Majority_Non_White")) %>%
   dplyr::select(-Whites, -TotalPoverty, -NAME)
-```
-### Mean Errors by Majority/Minority White Tracts
-```{r racialTractErrors, echo=TRUE, message=FALSE, warning=FALSE}
+
+ggplot() +
+  geom_sf(data = tractsDC.17, aes(fill = raceContext)) +
+  scale_fill_viridis(discrete = TRUE) +
+  labs(title = "Racial context of Washington DC") +
+  mapTheme()
+
 reg.summary %>%
   filter(str_detect(Regression, "LOGO")) %>%
   st_centroid() %>%
@@ -633,59 +627,15 @@ reg.summary %>%
   group_by(Regression, raceContext) %>%
   summarize(mean.Error = mean(Error, na.rm = T)) %>%
   spread(raceContext, mean.Error) %>%
-  kable(caption = "Mean Error by neighborhood racial demographics") %>%
+  kable(caption = "Mean error by neighborhood racial demographics") %>%
   kable_styling("striped", full_width = F)
 
 
 ```
 
+### Future graffiti complaints
 
-
-## Density vs predictions
-
-The `spatstat` function gets us kernel density estimates with varying search radii.
-
-Note that the code here is *different* than in the book - it has been updated to keep up with changes in packages.
-
-```{r kd_dependentVar, echo=TRUE, message=FALSE, warning=FALSE}
-# demo of kernel width
-graf_ppp <- as.ppp(st_coordinates(graffiti), W = st_bbox(final_net))
-graf_KD.1000 <- spatstat.core::density.ppp(graf_ppp, 1000)
-graf_KD.1500 <- spatstat.core::density.ppp(graf_ppp, 1500)
-graf_KD.2000 <- spatstat.core::density.ppp(graf_ppp, 2000)
-graf_KD.df <- rbind(
-  mutate(data.frame(rasterToPoints(mask(raster(graf_KD.1000), as(neighborhoods, 'Spatial')))), Legend = "1000 Ft."),
-  mutate(data.frame(rasterToPoints(mask(raster(graf_KD.1500), as(neighborhoods, 'Spatial')))), Legend = "1500 Ft."),
-  mutate(data.frame(rasterToPoints(mask(raster(graf_KD.2000), as(neighborhoods, 'Spatial')))), Legend = "2000 Ft.")) 
-
-graf_KD.df$Legend <- factor(graf_KD.df$Legend, levels = c("1000 Ft.", "1500 Ft.", "2000 Ft."))
-
-ggplot(data=graf_KD.df, aes(x=x, y=y)) +
-  geom_raster(aes(fill=layer)) + 
-  facet_wrap(~Legend) +
-  coord_sf(crs=st_crs(final_net)) + 
-  scale_fill_viridis(name="Density") +
-  labs(title = "Kernel density with 3 different search radii") +
-  mapTheme(title_size = 14)
-```
-
-```{r DV_kd_2017, echo=TRUE, message=FALSE, warning=FALSE}
-as.data.frame(graf_KD.1000) %>%
-  st_as_sf(coords = c("x", "y"), crs = st_crs(final_net)) %>%
-  aggregate(., final_net, mean) %>%
-   ggplot() +
-     geom_sf(aes(fill=value)) +
-     geom_sf(data = sample_n(graffiti, 1500), size = .5) +
-     scale_fill_viridis(name = "Density") +
-     labs(title = "Kernel density of 2017 graffiti") +
-     mapTheme(title_size = 14)
-```
-
-
-
-## Get 2018 crime data
-
-Let's see how our model performed relative to KD on the following year's data.
+In the code and figure below, we compare the prediction methods (kernel density and risk modeling) to the 2018 graffiti complaints data. This goodness of fit test gives us an idea of how good each method is able to capture the distribution of graffiti crimes across the District. It seems that both the kernel density and risk model have strengths and weaknesses. The kernel density is good at capturing the hotspot, whereas I would argue that the risk model is overfit to the 2017 data because of the way it hugs the cluster of points. However, the risk model is much better at capturing the cooler spots in and accounts for graffiti complaints in the Southeast part of the District that kernel density largely ignores.   
 
 ```{r crime2018, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 DC311_18 <- st_read("https://opendata.arcgis.com/datasets/2a46f1f1aad04940b83e75e744eb3b09_9.geojson") %>%
@@ -706,9 +656,18 @@ crime_net_18 <-
          cvID = sample(round(nrow(fishnet) / 24), 
                        size=nrow(fishnet), replace = TRUE))
 
-```
 
-```{r graffiti2018_kd, echo=TRUE, message=FALSE, warning=FALSE}
+graf_ppp <- as.ppp(st_coordinates(graffiti), W = st_bbox(final_net))
+graf_KD.1000 <- spatstat.core::density.ppp(graf_ppp, 1000)
+graf_KD.1500 <- spatstat.core::density.ppp(graf_ppp, 1500)
+graf_KD.2000 <- spatstat.core::density.ppp(graf_ppp, 2000)
+graf_KD.df <- rbind(
+  mutate(data.frame(rasterToPoints(mask(raster(graf_KD.1000), as(neighborhoods, 'Spatial')))), Legend = "1000 Ft."),
+  mutate(data.frame(rasterToPoints(mask(raster(graf_KD.1500), as(neighborhoods, 'Spatial')))), Legend = "1500 Ft."),
+  mutate(data.frame(rasterToPoints(mask(raster(graf_KD.2000), as(neighborhoods, 'Spatial')))), Legend = "2000 Ft.")) 
+graf_KD.df$Legend <- factor(graf_KD.df$Legend, levels = c("1000 Ft.", "1500 Ft.", "2000 Ft."))
+
+# Categorize the levels predicted by using Kernel Density
 graf_KDE_sf <- as.data.frame(graf_KD.1000) %>%
   st_as_sf(coords = c("x", "y"), crs = st_crs(final_net)) %>%
   aggregate(., final_net, mean) %>%
@@ -725,11 +684,8 @@ graf_KDE_sf <- as.data.frame(graf_KD.1000) %>%
       dplyr::select(graffiti18) %>% mutate(grafCount = 1), ., sum) %>%
     mutate(grafCount = replace_na(grafCount, 0))) %>%
   dplyr::select(label, Risk_Category, grafCount)
-```
 
-Note that this is different from the book, where we pull a model out of a list of models we've created. For your homework, you'll be creating multiple models.
-
-```{r graffiti2017_risk, echo=TRUE, message=FALSE, warning=FALSE}
+# Categorize the levels predicted by using regression models
 graf_risk_sf <-
   reg.ss.spatialCV %>%
   mutate(label = "Risk Predictions",
@@ -747,7 +703,7 @@ graf_risk_sf <-
   dplyr::select(label,Risk_Category, grafCount)
 ```
 
-We don't do quite as well because we don't have very many features, but still pretty good.
+
 
 ```{r RiskPred_v_KD, echo=TRUE, message=FALSE, warning=FALSE}
 rbind(graf_KDE_sf, graf_risk_sf) %>%
@@ -778,3 +734,10 @@ rbind(graf_KDE_sf, graf_risk_sf) %>%
       labs(title = "Risk prediction vs. Kernel density, 2018 graffiti") +
       theme(axis.text.x = element_text(angle = 45, vjust = 0.5))
 ```
+# Conclusion   
+The goal of building a risk prediction model is to make more granular decisions than would be allowed by using the traditional kernel density method. In some respects, our model can do this. It accounts for much more of the ‘cool’ areas where graffiti complaints occur. However, it is marginally less effective at encompassing the graffiti hotspots. To this end, it appears that the model may be overfit to the 2017 data and not generalizable to future changes in the distribution of the graffiti hotspots. The possible addition of the location of vacant buildings may prove to be a useful addition as a predictor variable.   
+Without further tuning and possibly adding more predictors, I would not recommend that this model be put into production. If the model were to be operationalized, there is an important distinction between its use to predict the location of where people will complain about graffiti versus where graffiti actually is in the District. Our current efforts are more aligned with the former case, which is okay if the DC Government is trying to deploy resources to clean areas of high graffiti complaints. However, if this model were to be used to direct police resources to target areas of heavy tagging, it may unfairly target certain groups of people based. For instance, the current model vastly underpredicts in majority white neighborhoods, but overpredicts in majority non-white neighborhoods.   
+
+
+#### Citations
+1. [Public Policy Analytics, Steif K., 2021, accessed 2021-10-28](https://urbanspatial.github.io/PublicPolicyAnalytics/)
